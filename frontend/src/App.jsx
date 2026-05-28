@@ -4,6 +4,7 @@ import { AuthProvider, useAuth } from './hooks/useAuth';
 import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
 import SearchKeys from './pages/SearchKeys';
+import ImageSearch from './pages/ImageSearch';
 import KeyDetail from './pages/KeyDetail';
 import Catalog from './pages/Catalog';
 import Panel from './pages/Panel';
@@ -50,7 +51,7 @@ function AppInner() {
       case 'dashboard':  return <Dashboard onNavigate={go} />;
       case 'search':     return <SearchKeys onDetail={openDetail} />;
       case 'detail':     return <KeyDetail keyId={detailId} onBack={() => go(prevScreen)} onPanel={() => go('panel')} />;
-      case 'imgsearch':  return <ImgSearch />;
+      case 'imgsearch':  return <ImageSearch onDetail={openDetail} />;
       case 'panel':      return <Panel onNavigate={go} onDetail={openDetail} />;
       case 'panellist':  return <PanelList onNavigate={go} onDetail={openDetail} />;
       case 'catalog':    return <Catalog onDetail={openDetail} />;
