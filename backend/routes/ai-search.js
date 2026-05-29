@@ -1,4 +1,4 @@
-// routes/ai-search.js
+// routes/ai-search.js — Google Gemini Vision
 const router = require('express').Router();
 const db     = require('../db/pool');
 const { auth } = require('../middleware/auth');
@@ -6,15 +6,13 @@ const multer = require('multer');
 
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
+  limits: { fileSize: 10 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
     if (file.mimetype.startsWith('image/')) cb(null, true);
     else cb(new Error('Apenas imagens são permitidas.'));
   },
 });
 
-// POST /api/ai-search
-// Body: multipart/form-data com campo "image"
 router.post('/', auth, upload.single('image'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'Nenhuma imagem enviada.' });
 
@@ -22,7 +20,7 @@ router.post('/', auth, upload.single('image'), async (req, res) => {
     const imageBase64 = req.file.buffer.toString('base64');
     const mimeType    = req.file.mimetype;
 
-    // 1. Buscar todas as chaves do banco para o Claude comparar
+    // Buscar todas as chaves do banco
     const { rows: allKeys } = await db.query(`
       SELECT k.id, k.code, k.application, k.profile, k.image_url,
              k.panel_column, k.panel_row, k.stock, k.status,
@@ -33,37 +31,11 @@ router.post('/', auth, upload.single('image'), async (req, res) => {
       ORDER BY k.code
     `);
 
-    // 2. Montar lista de chaves para o Claude analisar
     const keysList = allKeys.map(k =>
       `- Código: ${k.code} | Fabricante: ${k.manufacturer || '?'} | Aplicação: ${k.application || '?'} | Perfil: ${k.profile || '?'} | Categoria: ${k.category || '?'}`
     ).join('\n');
 
-    // 3. Chamar Claude Vision
-    const anthropicRes = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type':      'application/json',
-        'x-api-key':         process.env.ANTHROPIC_API_KEY,
-        'anthropic-version': '2023-06-01',
-      },
-      body: JSON.stringify({
-        model:      'claude-opus-4-5',
-        max_tokens: 1024,
-        messages: [
-          {
-            role: 'user',
-            content: [
-              {
-                type: 'image',
-                source: {
-                  type:       'base64',
-                  media_type: mimeType,
-                  data:       imageBase64,
-                },
-              },
-              {
-                type: 'text',
-                text: `Você é um especialista em chaves virgens para chaveiros.
+    const prompt = `Você é um especialista em chaves virgens para chaveiros.
 
 Analise a imagem desta chave e compare com o catálogo abaixo.
 
@@ -82,27 +54,45 @@ Responda APENAS em JSON válido, sem texto extra, sem markdown, neste formato ex
 }
 
 Retorne até 5 correspondências ordenadas por similaridade (0-100).
-Se não conseguir identificar, retorne correspondencias como array vazio.`,
-              },
-            ],
-          },
-        ],
-      }),
-    });
+Se não conseguir identificar, retorne correspondencias como array vazio.`;
 
-    if (!anthropicRes.ok) {
-      const err = await anthropicRes.text();
-      console.error('Anthropic error:', err);
-      return res.status(500).json({ error: 'Erro ao consultar IA: ' + err });
+    // Chamar Gemini Vision API
+    const geminiRes = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{
+            parts: [
+              {
+                inline_data: {
+                  mime_type: mimeType,
+                  data: imageBase64,
+                }
+              },
+              { text: prompt }
+            ]
+          }],
+          generationConfig: {
+            temperature: 0.1,
+            maxOutputTokens: 1024,
+          }
+        }),
+      }
+    );
+
+    if (!geminiRes.ok) {
+      const err = await geminiRes.text();
+      console.error('Gemini error:', err);
+      return res.status(500).json({ error: 'Erro ao consultar Gemini: ' + err });
     }
 
-    const anthropicData = await anthropicRes.json();
-    const rawText = anthropicData.content?.[0]?.text || '{}';
+    const geminiData = await geminiRes.json();
+    const rawText = geminiData.candidates?.[0]?.content?.parts?.[0]?.text || '{}';
 
-    // 4. Parsear resposta JSON do Claude
     let aiResult;
     try {
-      // Limpar possível markdown
       const cleaned = rawText.replace(/```json|```/g, '').trim();
       aiResult = JSON.parse(cleaned);
     } catch (e) {
@@ -110,21 +100,16 @@ Se não conseguir identificar, retorne correspondencias como array vazio.`,
       return res.status(500).json({ error: 'Erro ao processar resposta da IA.', raw: rawText });
     }
 
-    // 5. Enriquecer correspondências com dados completos do banco
     const correspondencias = (aiResult.correspondencias || []).map(match => {
       const key = allKeys.find(k => k.code === match.codigo);
       if (!key) return null;
-      return {
-        ...key,
-        similaridade: match.similaridade,
-        motivo:       match.motivo,
-      };
+      return { ...key, similaridade: match.similaridade, motivo: match.motivo };
     }).filter(Boolean);
 
     res.json({
-      descricao:          aiResult.descricao        || '',
-      fabricante_provavel: aiResult.fabricante_provavel || '',
-      perfil:             aiResult.perfil            || '',
+      descricao:           aiResult.descricao            || '',
+      fabricante_provavel: aiResult.fabricante_provavel  || '',
+      perfil:              aiResult.perfil               || '',
       correspondencias,
       total: correspondencias.length,
     });
