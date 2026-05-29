@@ -66,7 +66,7 @@ Se não conseguir identificar, retorne correspondencias como array vazio.`;
         'X-Title': 'Chaveiro Pro',
       },
       body: JSON.stringify({
-        model: 'google/gemma-4-31b-it:free',
+        model: 'openrouter/auto',
         messages: [
           {
             role: 'user',
