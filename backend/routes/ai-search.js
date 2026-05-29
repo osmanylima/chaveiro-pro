@@ -1,4 +1,4 @@
-// routes/ai-search.js — Google Gemini Vision
+// routes/ai-search.js — OpenRouter Vision (free)
 const router = require('express').Router();
 const db     = require('../db/pool');
 const { auth } = require('../middleware/auth');
@@ -56,40 +56,47 @@ Responda APENAS em JSON válido, sem texto extra, sem markdown, neste formato ex
 Retorne até 5 correspondências ordenadas por similaridade (0-100).
 Se não conseguir identificar, retorne correspondencias como array vazio.`;
 
-    // Chamar Gemini Vision API
-    const geminiRes = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${process.env.GEMINI_API_KEY}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{
-            parts: [
+    // Chamar OpenRouter API
+    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${process.env.OPENROUTER_API_KEY}`,
+        'Content-Type': 'application/json',
+        'HTTP-Referer': 'https://chaveiro-pro-dun.vercel.app',
+        'X-Title': 'Chaveiro Pro',
+      },
+      body: JSON.stringify({
+        model: 'meta-llama/llama-4-maverick:free',
+        messages: [
+          {
+            role: 'user',
+            content: [
               {
-                inline_data: {
-                  mime_type: mimeType,
-                  data: imageBase64,
-                }
+                type: 'image_url',
+                image_url: {
+                  url: `data:${mimeType};base64,${imageBase64}`,
+                },
               },
-              { text: prompt }
-            ]
-          }],
-          generationConfig: {
-            temperature: 0.1,
-            maxOutputTokens: 1024,
-          }
-        }),
-      }
-    );
+              {
+                type: 'text',
+                text: prompt,
+              },
+            ],
+          },
+        ],
+        max_tokens: 1024,
+        temperature: 0.1,
+      }),
+    });
 
-    if (!geminiRes.ok) {
-      const err = await geminiRes.text();
-      console.error('Gemini error:', err);
-      return res.status(500).json({ error: 'Erro ao consultar Gemini: ' + err });
+    if (!response.ok) {
+      const err = await response.text();
+      console.error('OpenRouter error:', err);
+      return res.status(500).json({ error: 'Erro ao consultar IA: ' + err });
     }
 
-    const geminiData = await geminiRes.json();
-    const rawText = geminiData.candidates?.[0]?.content?.parts?.[0]?.text || '{}';
+    const data = await response.json();
+    const rawText = data.choices?.[0]?.message?.content || '{}';
 
     let aiResult;
     try {
@@ -107,9 +114,9 @@ Se não conseguir identificar, retorne correspondencias como array vazio.`;
     }).filter(Boolean);
 
     res.json({
-      descricao:           aiResult.descricao            || '',
-      fabricante_provavel: aiResult.fabricante_provavel  || '',
-      perfil:              aiResult.perfil               || '',
+      descricao:           aiResult.descricao           || '',
+      fabricante_provavel: aiResult.fabricante_provavel || '',
+      perfil:              aiResult.perfil              || '',
       correspondencias,
       total: correspondencias.length,
     });
